@@ -5,10 +5,12 @@ import api
 
 app = Flask(__name__)
 
+# Backend address - change it if needed
+backend_address = "http://127.0.0.1:5000"
+
 app.add_url_rule('/', 'basic', api.basic, methods=['GET'])
-app.add_url_rule('/sender-status/<email>', 'sender_status', api.sender_status, methods=['POST'])
-app.add_url_rule('/single-email/<email>', 'single_email', api.single_email, methods=['POST'])
-app.add_url_rule('/bulk-emails/<email_col>', 'bulk_emails', api.bulk_emails, methods=['POST'])
+app.add_url_rule('/sender-status/<email>', 'sender_status', api.sender_status, methods=['GET'])
+app.add_url_rule('/single-email/<email>', 'single_email', api.single_email, methods=['GET'])
 
 if __name__ == '__main__':
     app.run(debug=True)

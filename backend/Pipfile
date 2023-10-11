@@ -4,6 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
+dnspython = "*"
+senderscore = "*"
+flask = "*"
+pandas = "*"
+mysql-connector-python = "*"
+requests = "*"
 
 [dev-packages]
 

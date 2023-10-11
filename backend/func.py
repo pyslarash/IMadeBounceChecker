@@ -84,6 +84,25 @@ def has_mx_records(email, max_retries=3, retry_interval=1):
                 print(f"Maximum retries reached for {domain}. Query timed out.")
                 return False
 
+# Gets MX record
+
+def get_mx_record(email):
+    try:
+        # Extract the domain from the email address
+        domain = email.split('@')[1]
+
+        # Perform an MX record lookup
+        mx_records = dns.resolver.query(domain, 'MX')
+        
+        # Return the first MX record found
+        if mx_records:
+            return str(mx_records[0].exchange)
+        
+        return "null"  # If no MX record is found
+
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout):
+        return "null"  # If an error occurs during the lookup
+
 # Checking against the list of disposable domains
 
 def is_disposable_email(email, disposable_domains):
@@ -299,3 +318,10 @@ def get_ssl_certificate_info(email, port=443):
         return f"SSL Error: {e}"
     except Exception as e:
         return f"Error occurred: {e}"
+    
+# Domain name
+
+def domain_name(email):
+    domain = email.split('@')[1] 
+    
+    return domain
