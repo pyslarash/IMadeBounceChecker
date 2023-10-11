@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="/img/cover.jpg" />
+</p>
+
 # I Made a Bounce Checker
 
 ## About
