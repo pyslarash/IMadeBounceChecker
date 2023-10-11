@@ -2,8 +2,6 @@
   <img src="/img/cover.jpg" />
 </p>
 
-# I Made a Bounce Checker
-
 ## About
 
 In today's digital environment, ensuring the integrity and deliverability of emails is paramount. Recognizing a need for an efficient method to scrutinize email addresses for potential bounces, I developed a sophisticated solution. This tool does not send any emails; rather, it meticulously examines lists, identifying key parameters that might influence bounce rates.
