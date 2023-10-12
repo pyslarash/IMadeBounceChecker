@@ -2,11 +2,35 @@
 
 import re
 import dns.resolver
-import time
 import smtplib
 from senderscore import senderscore
 import ssl
 import socket
+import requests
+
+# Read the proxy list from the file
+with open('lists/proxy_list.txt', 'r') as file:
+    proxy_list = [line.strip() for line in file.readlines()]
+    
+# Create a session with a proxy
+session = requests.Session()
+
+# Define a function to set the proxy for the session
+def set_proxy(session, proxy):
+    session.proxies = {
+        "http": proxy,
+        "https": proxy
+    }
+
+# Function to fetch MX, A, SPF, and DMARC records for a domain
+def fetch_records(email, max_retries=3, retry_interval=1):
+    domain = email.split('@')[1] 
+    records = {
+        "mx_record": None,
+        "a_record": None,
+        "spf_record": None,
+        "dmarc_record": None
+    }
 
 # 100 Common domain names
 common_domain_names = [
@@ -25,7 +49,7 @@ common_domain_names = [
         "blueyonder.co.uk", "bluewin.ch", "skynet.be", "sympatico.ca", "windstream.net", "mac.com", "centurytel.net",
         "chello.nl", "live.ca", "aim.com", "bigpond.net.au"
     ]
-    
+
 # Checking email syntax
 def is_valid_syntax(email):
     # Regular expression for validating an Email
@@ -37,74 +61,29 @@ def is_valid_syntax(email):
     else:
         return False
 
-# Checking if fomain exists
-def domain_exists(email, max_retries=3, retry_interval=1):
-    attempts = 0
-    while attempts < max_retries:
-        try:
-            # Extract domain from the email address
-            domain = email.split('@')[1]
-
-            # Perform a DNS query to check if MX records exist for the domain
-            dns.resolver.query(domain, 'MX')
-            return True
-        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
-            return False
-        except dns.exception.Timeout:
-            attempts += 1
-            if attempts < max_retries:
-                print(f"Retrying query for {domain} in {retry_interval} seconds...")
-                time.sleep(retry_interval)
-            else:
-                print(f"Maximum retries reached for {domain}. Query timed out.")
-                return False
+# Check if domain exists
+def domain_exists(records):
+    # Check if an MX record is present and if there are A records
+    return bool(records["mx_record"]) and bool(records["a_record"])
 
 # Check MX record
-
-def has_mx_records(email, max_retries=3, retry_interval=1):
+def has_mx_records(email, records):
+    # Extract domain from the email address
     domain = email.split('@')[1]
-    excluded_domains = common_domain_names
 
-    if domain in excluded_domains:
+    # Check if the domain is in the list of excluded domains
+    if domain in common_domain_names:
         return True
 
-    attempts = 0
-    while attempts < max_retries:
-        try:
-            answers = dns.resolver.query(domain, 'MX')
-            return len(answers) > 0
-        except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
-            return False
-        except dns.exception.Timeout:
-            attempts += 1
-            if attempts < max_retries:
-                print(f"Retrying query for {domain} in {retry_interval} seconds...")
-                time.sleep(retry_interval)
-            else:
-                print(f"Maximum retries reached for {domain}. Query timed out.")
-                return False
+    # Check if mx_record list in records is not empty
+    return bool(records["mx_record"])
 
 # Gets MX record
-
-def get_mx_record(email):
-    try:
-        # Extract the domain from the email address
-        domain = email.split('@')[1]
-
-        # Perform an MX record lookup
-        mx_records = dns.resolver.query(domain, 'MX')
-        
-        # Return the first MX record found
-        if mx_records:
-            return str(mx_records[0].exchange)
-        
-        return "null"  # If no MX record is found
-
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout):
-        return "null"  # If an error occurs during the lookup
+def mx_records(records):
+    # Get the list of MX records
+    return records["mx_record"]
 
 # Checking against the list of disposable domains
-
 def is_disposable_email(email, disposable_domains):
     # Extract the domain part of the email
     domain = email.split('@')[-1]
@@ -116,7 +95,6 @@ def is_disposable_email(email, disposable_domains):
         return False
     
 # Checking against the list of role-based usernames
-
 def is_role_based_email(email, role_based_usernames):
     # Extract the username part of the email (before '@')
     username = email.split('@')[0]
@@ -128,47 +106,46 @@ def is_role_based_email(email, role_based_usernames):
         return False
     
 # Checking if the IP is blacklisted
+def is_domain_ip_blacklisted(records, max_retries=3):
+    # Get the list of A records from the records dictionary
+    a_records = records.get("a_record", [])
 
-def is_domain_ip_blacklisted(email, max_retries=3):
-    domain = email.split('@')[1]
-    try:
-        # Perform a DNS query to get the IP address of the domain
-        ip_address = dns.resolver.query(domain, 'A')[0].address
-        
-        def is_ip_blacklisted(ip_address, dnsbl_domain='zen.spamhaus.org'):
+    # Define the DNSBL domain to check against (e.g., zen.spamhaus.org)
+    dnsbl_domain = 'zen.spamhaus.org'
+
+    # Iterate through the A records
+    for a_record in a_records:
+        ip_address = a_record
+
+        attempts = 0
+        while attempts < max_retries:
             try:
+                proxy = proxy_list[attempts % len(proxy_list)]
+                # Set the proxy for the session
+                set_proxy(session, proxy)
+
+                # Print the proxy address being used
+                print(f"Using proxy: {proxy}")
+                
                 # Perform a DNS query to check if the IP address is in the blacklist
                 query_result = dns.resolver.query(f'{ip_address}.{dnsbl_domain}', 'A')
-                return True  # IP address is blacklisted
+                
+                # If the query succeeds, the IP address is blacklisted
+                return True
+                
             except dns.resolver.NXDOMAIN:
                 return False  # IP address is not blacklisted
             except dns.resolver.Timeout:
-                print("DNS query timed out. Unable to check IP blacklist status.")
-                return False  # Unable to determine blacklist status due to timeout
+                print("DNS query timed out. Retrying...")
             except Exception as e:
                 print(f"Error occurred: {e}")
-                return False  # Error occurred during DNS query
-
-        # Retry the check in case of a timeout
-        attempts = 0
-        while attempts < max_retries:
-            if is_ip_blacklisted(ip_address):
-                return True
+            
             attempts += 1
-        
-        return False  # IP address is not blacklisted after max_retries attempts
-    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
-        print(f"No IP address found for domain: {domain}")
-        return False  # Domain does not resolve to an IP address
-    except dns.resolver.Timeout:
-        print("DNS query timed out. Unable to check IP blacklist status.")
-        return False  # Unable to determine blacklist status due to timeout
-    except Exception as e:
-        print(f"Error occurred: {e}")
-        return False  # Error occurred during DNS query
+
+    print("Maximum retries reached. Unable to determine blacklist status.")
+    return False  # Unable to determine blacklist status after max_retries attempts
 
 # Check for greylisting
-
 def is_greylisting_enabled(email):
     domain = email.split('@')[1]
     try:
@@ -188,41 +165,34 @@ def is_greylisting_enabled(email):
         print(f"Error occurred: {e}")
         return False  # Other errors during the connection attempt
     
-    # Checking if email uses Microsoft servers
-    
-def is_microsoft_email(email):
+# Checking if email uses Microsoft servers    
+def is_microsoft_email(records):
     try:
-        # Extract domain from the email address
-        domain = email.split('@')[1]
-        
-        # Perform a DNS query to get MX records for the domain
-        mx_records = dns.resolver.query(domain, 'MX')
-        
+        # Get the list of MX records from the records dictionary
+        mx_records = records.get("mx_record")
+        mx_without_dot = mx_records.rstrip('.')  # Remove trailing dot, if present
+        print(mx_without_dot)
         # Check if any MX record points to Microsoft's servers
         microsoft_domains = ['outlook.com', 'office365.com', 'live.com', 'hotmail.com']
-        for mx in mx_records:
-            for microsoft_domain in microsoft_domains:
-                if microsoft_domain in str(mx.exchange):
-                    return True  # Email is hosted on Microsoft servers
+        for microsoft_domain in microsoft_domains:
+            if microsoft_domain in mx_without_dot:
+                return True  # Email is hosted on Microsoft servers
         return False  # Email is not hosted on Microsoft servers
-    except dns.resolver.NXDOMAIN:
-        print(f"No MX records found for domain: {domain}")
-        return False  # Domain does not have MX records
     except Exception as e:
         print(f"Error occurred: {e}")
         return False  # Error occurred during the check
     
 # Getting the sender score
-
-def get_sender_score(email):
+def get_sender_score(records):
     try:
-        # Extract the domain part of the email address
-        domain = email.split('@')[1]
-        
-        # Perform a DNS query to get the IP address of the domain
-        answers = dns.resolver.query(domain, 'A')
-        ip_address = answers[0].address
-        print(ip_address)
+        # Get the list of A records from the records dictionary
+        a_records = records.get("a_record", [])
+
+        if not a_records:
+            return None  # No A records found
+
+        # Take the first IP address from the A records
+        ip_address = a_records[0]
 
         # Get the Sender Score using the senderscore module
         score = senderscore.get_score(ip_address)
@@ -232,67 +202,34 @@ def get_sender_score(email):
         return None
 
 # SPF Record Check
-    
-def check_spf_record(email, max_retries=3):
-    retries = 0
-    # Extract the domain part of the email address
-    domain = email.split('@')[1]    
-    while retries < max_retries:
-        try:
-            # Perform a DNS query to retrieve the SPF record of the domain
-            spf_records = dns.resolver.query(domain, 'TXT')
-            
-            # Check if any TXT record starts with 'v=spf1', indicating an SPF record
-            for spf_record in spf_records:
-                if spf_record.strings[0].decode().startswith('v=spf1'):
-                    return True
-            
-            # If no SPF record found, return False
-            return False
+def check_spf_record(records):
+    try:
+        # Get the SPF record from the records dictionary
+        spf_record = records.get("spf_record", None)
+
+        # Check if the SPF record exists
+        if spf_record and spf_record.startswith("v=spf1"):
+            return True
         
-        except dns.resolver.NXDOMAIN:
-            return False
-        except dns.resolver.Timeout:
-            retries += 1
-            if retries < max_retries:
-                print(f"DNS query timed out. Retrying... (Attempt {retries + 1}/{max_retries})")
-            else:
-                print("Max retries reached. Unable to check SPF record.")
-                return False
-        except Exception as e:
-            print(f"Error occurred: {e}")
-            return False
+        return False  # No SPF record found or it doesn't start with 'v=spf1'
+    except Exception as e:
+        print(f"Error occurred: {e}")
+        return False
         
 # Checking DMARC Record:
+def check_dmarc_record(records):
+    try:
+        # Get the DMARC record from the records dictionary
+        dmarc_record = records.get("dmarc_record", None)
 
-def check_dmarc_record(email, max_retries=3):
-    retries = 0
-    # Extract the domain part of the email address
-    domain = email.split('@')[1] 
-    while retries < max_retries:
-        try:
-            # Perform a DNS query to retrieve the DMARC record of the domain
-            dmarc_records = dns.resolver.query(f'_dmarc.{domain}', 'TXT')
-            
-            # If any DMARC record found, return True
-            for dmarc_record in dmarc_records:
-                return True
-            
-            # If no DMARC record found, return False
-            return False
+        # Check if the DMARC record exists
+        if dmarc_record:
+            return True
         
-        except dns.resolver.NXDOMAIN:
-            return False
-        except dns.resolver.Timeout:
-            retries += 1
-            if retries < max_retries:
-                print(f"DNS query timed out. Retrying... (Attempt {retries + 1}/{max_retries})")
-            else:
-                print("Max retries reached. Unable to check DMARC record.")
-                return False
-        except Exception as e:
-            print(f"Error occurred: {e}")
-            return False
+        return False  # No DMARC record found
+    except Exception as e:
+        print(f"Error occurred: {e}")
+        return False
         
 # Getting SSL Information
 def get_ssl_certificate_info(email, port=443):

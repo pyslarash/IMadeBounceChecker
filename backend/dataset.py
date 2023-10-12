@@ -5,9 +5,14 @@ import app
 import requests
 from tqdm import tqdm  # Import tqdm for the progress bar
 import os
+import shutil
+import csv
+
+# Set the filename
+filename = "emails.csv"
 
 # Importing the file
-data = "csv/emails.csv"
+data = "csv/" + filename
 
 # Importing the name of the email column
 col_name = "Email"
@@ -50,31 +55,56 @@ else:
 # Create a dictionary to store the key-value pairs from API responses
 data_dict = {}
 
-# Initialize tqdm with the total number of rows
+# Define the output directory and filename
+output_directory = os.path.join(os.getcwd(), "csv")
+output_filename = os.path.splitext(filename)[0] + "_in_progress.csv"
+output_file_path = os.path.join(output_directory, output_filename)
+
+# Initialize tqdm with the total number of rows and specify the mininterval
 progress_bar = tqdm(total=len(df), unit="row")
 
-# Iterate through the values in the specified column
-for index, row in df.iterrows():
-    value = row[col_name]
+# Create the "csv" directory if it doesn't exist
+os.makedirs(output_directory, exist_ok=True)
+
+# Check if the file already exists to determine if we need headers
+file_exists = os.path.exists(output_file_path)
+
+# Open the file once in append mode
+with open(output_file_path, 'a', newline='') as f:
+    writer = csv.writer(f)
     
-    # Build the API endpoint for the current value
-    api_endpoint_full = app.backend_address + f"/single-email/{value}"
+    # If file does not exist, write the headers
+    if not file_exists:
+        writer.writerow(df.columns)
     
-    # Send a GET request to the API
-    response = requests.get(api_endpoint_full)
-    
-    # Check if the request was successful
-    if response.status_code == 200:
-        # Parse the JSON response
-        json_response = response.json()
-        
-        # Update the data dictionary with key-value pairs from the JSON response
-        for key, value in json_response.items():
-            data_dict[key] = data_dict.get(key, []) + [value]
+    # Iterate through the values in the specified column
+    for index, row in df.iterrows():
+        value = row[col_name]
+
+        # Build the API endpoint for the current value
+        api_endpoint_full = app.backend_address + f"/single-email/{value}"
+
+        # Send a GET request to the API
+        response = requests.get(api_endpoint_full)
+
+        # Check if the request was successful
+        if response.status_code == 200:
+            # Parse the JSON response
+            json_response = response.json()
+
+            # Update the row with the data from the API response
+            for key, val in json_response.items():
+                row[key] = val
+                
+                # Update the data dictionary with key-value pairs from the JSON response
+                data_dict[key] = data_dict.get(key, []) + [val]
+
+            # Save the updated row to the in-progress file
+            writer.writerow(row)
+
+            # Update the progress bar by 1 row
+            progress_bar.update(1)
             
-    # Update the progress bar
-    progress_bar.update(1)
-    
 # Close the progress bar
 progress_bar.close()
 
@@ -85,6 +115,12 @@ for key, values in data_dict.items():
 # Define a function to delete rows based on a condition in a column
 def delete_rows(condition_column, condition_value):
     return df[df[condition_column] != condition_value]
+
+# DEBUG
+
+print(df.head())
+print(df["is_microsoft_email"].unique())
+print(df["is_microsoft_email"].value_counts())
 
 while True:
     # Prompt the user for input
@@ -152,19 +188,19 @@ while True:
 # Select only the original columns in the DataFrame
 df = df[original_columns]
 
-# Get the directory and filename from the input_file_path
-directory, filename = os.path.split(data)
-
-# Modify the filename to include "_filtered" before the file extension
-output_filename = os.path.splitext(filename)[0] + "_filtered.csv"
-
 # Construct the full output file path within the "csv" directory
 output_file_path = os.path.join(os.getcwd(), "csv", output_filename)  # Save in "csv" directory in the current directory
 
 # Create the "csv" directory if it doesn't exist
 os.makedirs(os.path.join(os.getcwd(), "csv"), exist_ok=True)
 
-# Export the final DataFrame with the modified filename
-df.to_csv(output_file_path, index=False)
+# After all processing is complete, rename the in-progress file to the final output file
+output_file_path_temp = os.path.join(os.getcwd(), "csv", output_filename.replace("_in_progress.csv", "_filtered.csv"))
 
-print(f"Filtered data exported to '{output_file_path}'")
+# Export the final DataFrame with the modified filename
+df.to_csv(output_file_path_temp, index=False)
+
+# Remove the in-progress file
+os.remove(output_file_path)
+
+print(f"Filtered data exported to '{output_file_path_temp}'")
