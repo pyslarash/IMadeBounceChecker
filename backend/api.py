@@ -2,20 +2,13 @@
 
 from flask import Flask, jsonify, request
 import func
+import fetch
 import pandas as pd
 import csv
 import mysql.connector
 import random
 import string
 
-
-# Database configuration
-db_config = {
-    "host": "localhost",
-    "user": "root",
-    "database": "imadebouncechecker",
-    "auth_plugin": "mysql_native_password"
-}
 
 # Loading a list of disposable domains
 
@@ -46,11 +39,12 @@ def basic():
     return jsonify(message="This API works just fine!")
 
 def sender_status(email):
-    is_domain_ip_blacklisted = func.is_domain_ip_blacklisted(email)
+    records = fetch.fetch_records(email)
+    is_domain_ip_blacklisted = func.is_domain_ip_blacklisted(records)
     domain_name = func.domain_name(email)
-    sender_score = func.get_sender_score(email)
-    check_spf_record = func.check_spf_record(email)
-    check_dmarc_record = func.check_dmarc_record(email)
+    sender_score = func.get_sender_score(records)
+    check_spf_record = func.check_spf_record(records)
+    check_dmarc_record = func.check_dmarc_record(records)
     get_ssl_certificate_info = func.get_ssl_certificate_info(email)
     verification_result = {
         'email': email,
@@ -64,16 +58,16 @@ def sender_status(email):
     return jsonify(verification_result)
 
 def single_email(email):
+    records = fetch.fetch_records(email)
     is_valid_syntax = func.is_valid_syntax(email)
-    domain_exists = func.domain_exists(email)
+    domain_exists = func.domain_exists(records)
     domain_name = func.domain_name(email)
-    has_mx_records = func.has_mx_records(email)
-    get_mx_record = func.get_mx_record(email)
+    has_mx_records = func.has_mx_records(email, records)
+    mx_records = func.mx_records(records)
     is_disposable_email = func.is_disposable_email(email, disposable_domains)
     role_based = func.is_role_based_email(email, role_based_usernames)
-    is_domain_ip_blacklisted = func.is_domain_ip_blacklisted(email)
-    # is_greylisting_enabled = func.is_greylisting_enabled(email)
-    is_microsoft_email = func.is_microsoft_email(email)
+    is_domain_ip_blacklisted = func.is_domain_ip_blacklisted(records)
+    is_microsoft_email = func.is_microsoft_email(records)
     # Prepare verification result
     verification_result = {
         'email': email,
@@ -81,10 +75,18 @@ def single_email(email):
         'is_valid_syntax': is_valid_syntax,
         'domain_exists': domain_exists,
         'has_mx_records': has_mx_records,
-        'mx_record': get_mx_record,
+        'mx_records': mx_records,
         'is_disposable_email': is_disposable_email,
         'is_role_based_email': role_based,
         'is_domain_ip_blacklisted': is_domain_ip_blacklisted,
         'is_microsoft_email': is_microsoft_email,
+    }
+    return jsonify(verification_result)
+
+def fetch_records(email):
+    records = fetch.fetch_records(email)
+    verification_result = {
+        'email': email,
+        'records': records,
     }
     return jsonify(verification_result)
