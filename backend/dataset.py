@@ -3,9 +3,9 @@
 import pandas as pd
 import app
 import requests
-from tqdm import tqdm  # Import tqdm for the progress bar
+from tqdm import tqdm
 import os
-import shutil
+import time
 import csv
 
 # Set the filename
@@ -17,10 +17,14 @@ data = "csv/" + filename
 # Importing the name of the email column
 col_name = "Email"
 
-# Reading the imported file
+# Defining the output directory and filename
+output_directory = os.path.join(os.getcwd(), "csv")
+output_filename = os.path.splitext(filename)[0] + "_in_progress.csv"
+output_file_path = os.path.join(output_directory, output_filename)
+
 df = pd.read_csv(data)
 
-# Save the names of the original columns in the original_columns variable
+# Save the names of the columns in the original_columns variable
 original_columns = df.columns.tolist()
 
 # Trim leading and trailing spaces from the values in the col_name
@@ -45,82 +49,96 @@ if response.status_code == 200:
 
     # Create new columns in the DataFrame for the dynamic keys and populate them with values
     for key in dynamic_keys:
-        df[key] = json_response[key]
-
-    # Print the column names of the updated DataFrame
-    print(df.columns)
+        if key not in df.columns:  # Check if the column doesn't exist already
+            df[key] = json_response[key]
 else:
     print(f"API request failed with status code {response.status_code}")
     
 # Create a dictionary to store the key-value pairs from API responses
 data_dict = {}
 
-# Define the output directory and filename
-output_directory = os.path.join(os.getcwd(), "csv")
-output_filename = os.path.splitext(filename)[0] + "_in_progress.csv"
-output_file_path = os.path.join(output_directory, output_filename)
+# Determine the last processed email from the output file
+last_processed_email = None
 
-# Initialize tqdm with the total number of rows and specify the mininterval
-progress_bar = tqdm(total=len(df), unit="row")
+# Determine the last processed index from the "_in_progress.csv" file
+if os.path.exists(output_file_path):
+    df_existing = pd.read_csv(output_file_path)
+    
+    # Check if the output file contains any rows
+    if not df_existing.empty:
+        last_processed_index = df_existing.index[-1] + 1  # Get the index of the last row + 1
+    else:
+        last_processed_index = 0
+else:
+    last_processed_index = 0
+    
+print(last_processed_index)
 
-# Create the "csv" directory if it doesn't exist
-os.makedirs(output_directory, exist_ok=True)
-
-# Check if the file already exists to determine if we need headers
-file_exists = os.path.exists(output_file_path)
+progress_bar = tqdm(total=len(df), unit="row", initial=last_processed_index)
 
 # Open the file once in append mode
 with open(output_file_path, 'a', newline='') as f:
     writer = csv.writer(f)
     
-    # If file does not exist, write the headers
-    if not file_exists:
-        writer.writerow(df.columns)
+    # Check if this is the first row (header row)
+    if last_processed_index == 0:
+        # Write the header row
+        header_row = df.columns.tolist()
+        writer.writerow(header_row)
     
-    # Iterate through the values in the specified column
-    for index, row in df.iterrows():
+    # Iterate through the values in the specified column starting from the last processed row
+    for index, row in df.iloc[last_processed_index:].iterrows():
         value = row[col_name]
 
         # Build the API endpoint for the current value
         api_endpoint_full = app.backend_address + f"/single-email/{value}"
 
-        # Send a GET request to the API
-        response = requests.get(api_endpoint_full)
+        attempts = 0
+        success = False
+        
+        # Try to make the request up to 3 times
+        while attempts < 3 and not success:
+            # Send a GET request to the API
+            response = requests.get(api_endpoint_full)
 
-        # Check if the request was successful
-        if response.status_code == 200:
-            # Parse the JSON response
-            json_response = response.json()
+            # Check if the request was successful
+            if response.status_code == 200:
+                success = True
+                # Parse the JSON response
+                json_response = response.json()
 
-            # Update the row with the data from the API response
-            for key, val in json_response.items():
-                row[key] = val
-                
-                # Update the data dictionary with key-value pairs from the JSON response
-                data_dict[key] = data_dict.get(key, []) + [val]
+                # Update the row with the data from the API response
+                for key, val in json_response.items():
+                    if key == "email":
+                        continue
+                    row[key] = val
+                    
+                    # Update the data dictionary with key-value pairs from the JSON response
+                    data_dict[key] = data_dict.get(key, []) + [val]
+                    
+                # Save the updated row to the in-progress file
+                writer.writerow(row)
 
-            # Save the updated row to the in-progress file
-            writer.writerow(row)
-
-            # Update the progress bar by 1 row
-            progress_bar.update(1)
+                # Update the progress bar by 1 row
+                progress_bar.update(1)
             
+            else:
+                attempts += 1
+                if attempts < 3:  # Only sleep if we're going to make another attempt
+                    time.sleep(3)  # Sleep for 3 seconds before retrying (optional)
+        
 # Close the progress bar
 progress_bar.close()
 
-# Update the DataFrame with the data from the API responses
-for key, values in data_dict.items():
-    df[key] = values
+# Delete the old DataFrame since we need to clear everything
+del df
+
+# Load the "_in_progress.csv" file with all of the updated information into a new DataFrame
+df = pd.read_csv(output_file_path)
 
 # Define a function to delete rows based on a condition in a column
 def delete_rows(condition_column, condition_value):
     return df[df[condition_column] != condition_value]
-
-# DEBUG
-
-print(df.head())
-print(df["is_microsoft_email"].unique())
-print(df["is_microsoft_email"].value_counts())
 
 while True:
     # Prompt the user for input
